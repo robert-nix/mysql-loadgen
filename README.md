@@ -4,7 +4,7 @@ Tools to create a large number of MySQL tables and generate queries.
 
 ### Go Scripts
 
-* initdbs: create databases necessary for querier
+* initdbs: create databases necessary for querier.  Uses about 45GB disk space with default parameters.
 * querier: query the databases with ramping concurrency, reporting QPS and errors
 
 ### Scripts
