@@ -27,6 +27,7 @@ func main() {
 		sampleTime:  90 * time.Second,
 	}
 
+	t.printHeader()
 	err := t.tune()
 	if err != nil {
 		panic(err)
@@ -108,6 +109,10 @@ func (t *tuner) tune() error {
 
 var schemata map[string]struct{}
 
+func (t *tuner) printHeader() {
+	fmt.Printf("%s\truntimeMS\tittimeUS\tqueries\terrors\trssPages\tutimeTicks\topenedTables\n", t.option)
+}
+
 func (t *tuner) sample(v int) error {
 	inst, err := startMysql(fmt.Sprintf("--%s=%d", t.option, v))
 	if err != nil {
@@ -143,6 +148,7 @@ func (t *tuner) sample(v int) error {
 		procStat, _ := inst.stat()
 		lastUTime = procStat.UTime
 	}
+	lastOpenedTables, _ := fetchGlobalStatusVar(db, "Opened_tables")
 	for {
 		now := <-tick.C
 		totalDur := now.Sub(start)
@@ -154,7 +160,10 @@ func (t *tuner) sample(v int) error {
 		procStat, _ := inst.stat()
 		dUTime := procStat.UTime - lastUTime
 		lastUTime = procStat.UTime
-		fmt.Printf("%d\t%d\t%d\t%d\t%d\t%d\t%d\n", v, totalDur.Milliseconds(), itDur.Microseconds(), qs, es, procStat.RSS, dUTime)
+		openedTables, _ := fetchGlobalStatusVar(db, "Opened_tables")
+		dOpenedTables := openedTables - lastOpenedTables
+		lastOpenedTables = openedTables
+		fmt.Printf("%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", v, totalDur.Milliseconds(), itDur.Microseconds(), qs, es, procStat.RSS, dUTime, dOpenedTables)
 		if totalDur >= t.sampleTime {
 			close(done)
 			break
@@ -163,6 +172,16 @@ func (t *tuner) sample(v int) error {
 
 	wg.Wait()
 	return nil
+}
+
+func fetchGlobalStatusVar(db *sql.DB, name string) (int, error) {
+	var retName string
+	var value int
+	err := db.QueryRow("SHOW GLOBAL STATUS LIKE ?", name).Scan(&retName, &value)
+	if err != nil {
+		return 0, err
+	}
+	return value, nil
 }
 
 func (t *tuner) sampleThread(db *sql.DB, done chan struct{}, wg *sync.WaitGroup, n int) {
