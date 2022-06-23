@@ -53,6 +53,7 @@ func main() {
 
 	nameChan := make(chan string, concurrency)
 	var wg sync.WaitGroup
+	wg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
 		go func() {
 			for name := range nameChan {
