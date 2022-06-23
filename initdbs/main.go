@@ -26,12 +26,9 @@ func main() {
 		panic(err)
 	}
 
-	schemata, err := mysql.LoadSchemaNames(db)
-	if err != nil {
-		panic(err)
-	}
-
-	if _, ok := schemata["shared"]; !ok {
+	var sharedName string
+	err = db.QueryRow("show databases like 'shared'").Scan(&sharedName)
+	if err == sql.ErrNoRows {
 		fmt.Printf("creating shared db ...")
 		sharedbSQL, err := loadSQLFixture("fixtures/shared.sql")
 		if err != nil {
@@ -42,6 +39,11 @@ func main() {
 			panic(err)
 		}
 		fmt.Printf(" done\n")
+	}
+
+	schemata, err := mysql.LoadSchemaNames(db)
+	if err != nil {
+		panic(err)
 	}
 
 	mediawikiSQL, err := loadSQLFixture("fixtures/mediawiki.sql")
