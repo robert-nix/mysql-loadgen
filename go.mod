@@ -4,6 +4,7 @@ go 1.18
 
 require (
 	github.com/go-sql-driver/mysql v1.6.0
+	github.com/mitchellh/go-ps v1.0.0
 	github.com/prometheus/procfs v0.7.3
 	github.com/schollz/progressbar/v3 v3.8.6
 )

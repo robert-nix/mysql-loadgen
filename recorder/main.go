@@ -8,27 +8,25 @@ import (
 	"log"
 	"math/rand"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/mitchellh/go-ps"
 	"github.com/prometheus/procfs"
 	"github.com/robert-nix/mysql-loadgen/internal/mysql"
 )
 
 func main() {
-	t := &tuner{
-		option:      "table-definition-cache",
-		min:         1000,
-		max:         501000,
-		step:        100000,
+	t := &recorder{
 		concurrency: 32,
 		sampleTime:  90 * time.Second,
 	}
 
-	t.printHeader()
-	err := t.tune()
+	fmt.Printf("runtimeMS\tittimeUS\tqueries\terrors\trssPages\tutimeTicks\n")
+	err := t.record()
 	if err != nil {
 		panic(err)
 	}
@@ -59,12 +57,27 @@ func startMysql(args ...string) (*mysqlInstance, error) {
 		close(instance.done)
 		close(instance.ready)
 	}()
-	instance.proc, err = procfs.NewProc(cmd.Process.Pid)
+	<-instance.ready
+
+	// hack, exec on proper linux abandons the original pid:
+	var execPid int
+	procs, err := ps.Processes()
+	if err != nil {
+		return nil, err
+	}
+	for _, proc := range procs {
+		if strings.Contains(proc.Executable(), "mysqld") {
+			execPid = proc.Pid()
+			break
+		}
+	}
+
+	instance.proc, err = procfs.NewProc(execPid)
 	if err != nil {
 		// only happens when /proc isn't available
 		panic(err)
 	}
-	<-instance.ready
+
 	return instance, err
 }
 
@@ -87,19 +100,17 @@ func (i *mysqlInstance) stat() (procfs.ProcStat, error) {
 	return i.proc.Stat()
 }
 
-type tuner struct {
-	option         string
-	min, max, step int
-	concurrency    int
+type recorder struct {
+	concurrency int
 
 	sampleTime time.Duration
 
 	queries, errors int64
 }
 
-func (t *tuner) tune() error {
-	for v := t.min; v <= t.max; v += t.step {
-		err := t.sample(v)
+func (t *recorder) record() error {
+	for i := 0; i < 5; i++ {
+		err := t.sample()
 		if err != nil {
 			return err
 		}
@@ -109,12 +120,8 @@ func (t *tuner) tune() error {
 
 var schemata map[string]struct{}
 
-func (t *tuner) printHeader() {
-	fmt.Printf("%s\truntimeMS\tittimeUS\tqueries\terrors\trssPages\tutimeTicks\topenedTables\n", t.option)
-}
-
-func (t *tuner) sample(v int) error {
-	inst, err := startMysql(fmt.Sprintf("--%s=%d", t.option, v))
+func (t *recorder) sample() error {
+	inst, err := startMysql()
 	if err != nil {
 		return err
 	}
@@ -148,7 +155,6 @@ func (t *tuner) sample(v int) error {
 		procStat, _ := inst.stat()
 		lastUTime = procStat.UTime
 	}
-	lastOpenedTables, _ := fetchGlobalStatusVar(db, "Opened_tables")
 	for {
 		now := <-tick.C
 		totalDur := now.Sub(start)
@@ -160,10 +166,7 @@ func (t *tuner) sample(v int) error {
 		procStat, _ := inst.stat()
 		dUTime := procStat.UTime - lastUTime
 		lastUTime = procStat.UTime
-		openedTables, _ := fetchGlobalStatusVar(db, "Opened_tables")
-		dOpenedTables := openedTables - lastOpenedTables
-		lastOpenedTables = openedTables
-		fmt.Printf("%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", v, totalDur.Milliseconds(), itDur.Microseconds(), qs, es, procStat.RSS, dUTime, dOpenedTables)
+		fmt.Printf("%d\t%d\t%d\t%d\t%d\t%d\n", totalDur.Milliseconds(), itDur.Microseconds(), qs, es, procStat.RSS, dUTime)
 		if totalDur >= t.sampleTime {
 			close(done)
 			break
@@ -174,17 +177,7 @@ func (t *tuner) sample(v int) error {
 	return nil
 }
 
-func fetchGlobalStatusVar(db *sql.DB, name string) (int, error) {
-	var retName string
-	var value int
-	err := db.QueryRow("SHOW GLOBAL STATUS LIKE ?", name).Scan(&retName, &value)
-	if err != nil {
-		return 0, err
-	}
-	return value, nil
-}
-
-func (t *tuner) sampleThread(db *sql.DB, done chan struct{}, wg *sync.WaitGroup, n int) {
+func (t *recorder) sampleThread(db *sql.DB, done chan struct{}, wg *sync.WaitGroup, n int) {
 	r := rand.New(rand.NewSource(time.Now().UnixNano() ^ int64(n)))
 	skipFirstN := r.Intn(len(schemata))
 	for {

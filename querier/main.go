@@ -28,8 +28,8 @@ func main() {
 		panic(err)
 	}
 
-	for i := 16; i <= 512; i *= 2 {
-		measureQPS(db, i)
+	for {
+		measureQPS(db, 32)
 	}
 }
 
