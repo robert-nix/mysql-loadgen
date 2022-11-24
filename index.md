@@ -1,1 +1,2 @@
 - [table-definition-cache](./table-definition-cache.html)
+- [stall-measurement](./stall-measurement.html)
